@@ -49,34 +49,9 @@ eval x (E a MulOp b) = eval x a * eval x b
 eval x (E a AddOp b) = eval x a + eval x b
 
 exprToPoly :: Expr -> Poly
-exprToPoly expression =
-    fromList (map (collect simplified) (reverse [0..maxExponent]))
-    where
-        simplified = polyize expression
-        maxExponent = maxExp simplified
-
-        collect :: Expr -> Int -> Int
-        collect (X a b) b'
-            | b == b' = a
-            | otherwise = 0
-        collect (E a _ b) b' = collect a b' + collect b b'
-
-        maxExp :: Expr -> Int
-        maxExp (X _ b) = b
-        maxExp (E exp1 _ exp2) = max (maxExp exp1) (maxExp exp2)
-
-        polyize :: Expr -> Expr
-        polyize x@(X a b) = x
-        polyize (E a AddOp b) = E (polyize a) AddOp (polyize b)
-        polyize (E a MulOp b) = multiply (polyize a) (polyize b)
-
-        multiply :: Expr -> Expr -> Expr
-        multiply (X a1 b1) (X a2 b2) = X (a1*a2) (b1+b2)
-        multiply x@(X a1 b1) (E exp1 AddOp exp2) =
-                E (multiply x exp1) AddOp (multiply x exp2)
-        multiply e@(E _ AddOp _) x@(X _ _) = multiply x e
-        multiply (E exp1 AddOp exp2) e@(E _ AddOp _) =
-            E (multiply exp1 e) AddOp (multiply exp2 e)
+exprToPoly (E e1 AddOp e2) = exprToPoly e1 + exprToPoly e2
+exprToPoly (E e1 MulOp e2) = exprToPoly e1 * exprToPoly e2
+exprToPoly (X a b) = fromList (a : replicate b 0)
 
 prop_exprToPoly :: Expr -> Int -> Bool
 prop_exprToPoly e x = eval x e == evalPoly x (exprToPoly e)
@@ -85,38 +60,33 @@ simplify :: Expr -> Expr
 simplify = polyToExpr . exprToPoly
 
 polyToExpr :: Poly -> Expr
-polyToExpr = addAll . filterJunk . listToExpr . toList
+polyToExpr = addAll . filter junkFilter . listToExpr . toList
     where
         addAll :: [Expr] -> Expr
         addAll [] = X 0 1
-        addAll list = foldr1 folder list
-
-        filterJunk :: [Expr] -> [Expr]
-        filterJunk = filter (not . junkFilter)
+        addAll list = foldr1 (\x y -> E x AddOp y) list
 
         junkFilter :: Expr -> Bool
-        junkFilter (X 0 _) = True
-        junkFilter _ = False
-
-        folder :: Expr -> Expr -> Expr
-        folder a b = E a AddOp b
+        junkFilter (X 0 _) = False
+        junkFilter _ = True
 
         listToExpr :: [Int] -> [Expr]
-        listToExpr list = zipWith X (reverse list) [0..length list]
-
+        listToExpr list = zipWith X list (reverse [0..length list - 1])
 
 prop_polyToExpr :: Poly -> Int -> Bool
 prop_polyToExpr p x = evalPoly x p == eval x (polyToExpr p)
 
+-- If a simplified expression is evaluated to "0", this will count as junk
+-- according to the junk filter, but isn't actually junk, so we added a
+-- special case for that
 prop_noJunk :: Expr -> Bool
 prop_noJunk = not . isJunk . simplify
 
 isJunk :: Expr -> Bool
 isJunk (X _ _) = False
-isJunk (E (X 0 _) MulOp _) = True
+isJunk (E (X 0 _) _ _) = True -- we cannot check for (X 0 _) by itself since
+-- an expression with only (X 0 _ is not junk)
 isJunk (E (X 1 0) MulOp _) = True
-isJunk (E (X 0 _) AddOp _) = True
-isJunk (E _ MulOp (X 0 _)) = True
+isJunk (E _ _ (X 0 _)) = True -- can comment out
 isJunk (E _ MulOp (X 1 0)) = True
-isJunk (E _ AddOp (X 0 _)) = True
 isJunk (E a o b) = isJunk a || isJunk b
